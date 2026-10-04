@@ -433,7 +433,7 @@ const SIGNAL = "#D4AF37";
 const PANEL = "#171208";
 const PANEL2 = "#211A0E";
 const LIVE = "#FF5A4E";
-const TOTAL = 24;
+const TOTAL = 25;
 
 const STRIPE = {
   basic:"https://buy.stripe.com/cNi8wRe8a9ZtcZh7YeafS05",
@@ -731,7 +731,7 @@ function Header({ go, setMenu }) {
       </div>
       <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
         <div style={{color:GOLD,fontSize:11,letterSpacing:0.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontWeight:500}}>
-          Cinema intelligence platform &nbsp;·&nbsp; 600+ AI tools &nbsp;·&nbsp; 8K export &nbsp;·&nbsp; films up to 3 hours
+          Cinema intelligence platform &nbsp;·&nbsp; 200+ AI tools &nbsp;·&nbsp; 8K export &nbsp;·&nbsp; films up to 3 hours
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
@@ -792,7 +792,24 @@ function ToolPanel({ tool, onClose, onSave }) {
   const photoRef = useRef(null);
   const inp = {width:"100%",background:"#171208",border:"1px solid "+GOLDDIM,padding:"9px 12px",color:WHITE,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"'Archivo',system-ui,sans-serif"};
 
-  const speak = (vid, txt) => speakText(vid, txt, ()=>setPlaying(vid), ()=>setPlaying(null));
+  const speak = async (vid, txt) => {
+    setPlaying(vid);
+    try{
+      const voiceChar = STOCK_VOICES.find(x=>x.id===vid);
+      const url = await engineSpeak(txt, {
+        voice: vid,
+        gender: voiceChar && /female/i.test(voiceChar.desc) ? "Female" : "Male",
+        origin: voiceChar && voiceChar.accent || ""
+      });
+      if(url){
+        const ok = await playEngineAudio(url, 1);
+        setPlaying(null);
+        if(ok) return;
+      }
+    }catch(e){}
+    // Engine unavailable — fall back to on-device voice so playback still works.
+    speakText(vid, txt, ()=>setPlaying(vid), ()=>setPlaying(null));
+  };
 
   const runAI = async () => {
     if (!describe.trim()) return;
@@ -2526,11 +2543,23 @@ function P6Voice({ onSave, setMediaLib }) {
         try{const r=await fetch(u);const b=await r.blob();parts.push(b);}catch(e){}
       }
       if(!parts.length){alert("Couldn't render the narration audio — check the engine and try again.");setDlBusy(false);return;}
-      const merged=new Blob(parts,{type:parts[0].type||"audio/mpeg"});
+      const isWav=(parts[0].type||"").includes("wav");
+      const merged=new Blob(parts,{type:isWav?"audio/wav":"audio/mpeg"});
+      const ext=isWav?".wav":".mp3";
+      let name=window.prompt("Name your narration file:","Narration_"+(selected.name||"voice"));
+      if(name===null){setDlBusy(false);return;}
+      name=(name.trim()||("Narration_"+(selected.name||"voice"))).replace(/[\\/:*?"<>|]/g,"_");
+      if(!/\.(mp3|wav)$/i.test(name))name+=ext;
+      if(window.showSaveFilePicker){
+        try{
+          const h=await window.showSaveFilePicker({suggestedName:name});
+          const w=await h.createWritable();await w.write(merged);await w.close();
+          setDlBusy(false);return;
+        }catch(e){if(e&&e.name==="AbortError"){setDlBusy(false);return;}}
+      }
       const url=URL.createObjectURL(merged);
-      const ext=(merged.type.includes("wav"))?".wav":(merged.type.includes("webm"))?".webm":".mp3";
       const a=document.createElement("a");
-      a.href=url; a.download="Narration_"+(selected.name||"voice")+"_"+Date.now()+ext; a.rel="noopener noreferrer";
+      a.href=url; a.download=name; a.rel="noopener noreferrer";
       document.body.appendChild(a); a.click();
       setTimeout(()=>{try{document.body.removeChild(a);URL.revokeObjectURL(url);}catch(e){}},2000);
     }catch(e){alert("Download failed: "+(e&&e.message||e));}
@@ -2603,6 +2632,20 @@ function P6Voice({ onSave, setMediaLib }) {
                   </div>
                   <div style={{display:"flex",gap:4,flexShrink:0}}>
                     {v.url&&<button onClick={e=>{e.stopPropagation();const a=new Audio(v.url);a.play().catch(()=>{});}} style={{background:GOLDDIM,border:"none",color:"#000",padding:"3px 8px",cursor:"pointer",fontSize:9,fontWeight:600}}>▶</button>}
+                    {v.url&&<button title="Save this recording to your device" onClick={async e=>{e.stopPropagation();
+                      try{
+                        const r=await fetch(v.url);const b=await r.blob();
+                        const t=b.type||"";const ext=t.includes("wav")?".wav":t.includes("mp4")||t.includes("m4a")||t.includes("aac")?".m4a":t.includes("webm")?".webm":t.includes("ogg")?".ogg":".mp3";
+                        let nm=window.prompt("Name this recording:",(v.name||"My recording").replace(/[\\/:*?"<>|]/g,"_"));
+                        if(nm===null)return;
+                        nm=(nm.trim()||"My recording").replace(/[\\/:*?"<>|]/g,"_");
+                        if(!/\.(mp3|wav|m4a|webm|ogg)$/i.test(nm))nm+=ext;
+                        const f=new File([b],nm,{type:t||"audio/mpeg"});
+                        if(navigator.canShare&&navigator.canShare({files:[f]})){try{await navigator.share({files:[f],title:nm});return;}catch(er){if(er&&er.name==="AbortError")return;}}
+                        const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=nm;a.rel="noopener";document.body.appendChild(a);a.click();
+                        setTimeout(()=>{try{document.body.removeChild(a);URL.revokeObjectURL(u);}catch(er){}},3000);
+                      }catch(er){alert("Couldn't save this recording: "+(er&&er.message||er));}
+                    }} style={{background:GOLD,border:"none",color:"#000",padding:"3px 8px",cursor:"pointer",fontSize:9,fontWeight:600}}>⬇</button>}
                     <button onClick={e=>{e.stopPropagation();delMyVoice(v.id);}} style={{background:"#171208",border:"1px solid "+GOLDDIM,color:GOLD,padding:"3px 8px",cursor:"pointer",fontSize:9,fontWeight:600}}>✕</button>
                   </div>
                 </div>
@@ -2832,19 +2875,30 @@ function P8VideoGenerator({ onSave, user, filmDuration, setFilmDuration }) {
     {id:"natural",label:"Natural"},
   ];
 
-  const mmmAddFiles=(files)=>{
+  // Reads files ONE AT A TIME, in the order you picked them. Before this, every
+  // image kicked off its own independent FileReader all at once (forEach), and
+  // whichever one happened to finish reading first landed first in the list —
+  // so a bigger photo near the start of your script could land near the end,
+  // scrambling the order your images matched your script. Now each file is
+  // fully read before the next one starts, so the order you selected is always
+  // the order they land in.
+  const mmmAddFiles=async(files)=>{
     const arr=Array.from(files||[]);
-    arr.forEach(f=>{
-      if(f.type.startsWith("image")){
-        const r=new FileReader();
-        r.onload=ev=>setMmmImages(p=>[...p,{name:f.name,dataUrl:ev.target.result}]);
-        r.readAsDataURL(f);
-      }else if(f.type.startsWith("text")||f.name.match(/\.(txt|md|fdx|fountain)$/i)){
-        const r=new FileReader();
-        r.onload=ev=>setMmmText(p=>(p?p+"\n\n":"")+String(ev.target.result||""));
-        r.readAsText(f);
-      }
+    const readAs=(file,asText)=>new Promise(res=>{
+      const r=new FileReader();
+      r.onload=ev=>res(ev.target.result);
+      r.onerror=()=>res(null);
+      if(asText)r.readAsText(file);else r.readAsDataURL(file);
     });
+    for(const f of arr){
+      if(f.type.startsWith("image")){
+        const dataUrl=await readAs(f,false);
+        if(dataUrl)setMmmImages(p=>[...p,{name:f.name,dataUrl}]);
+      }else if(f.type.startsWith("text")||f.name.match(/\.(txt|md|fdx|fountain)$/i)){
+        const text=await readAs(f,true);
+        if(text)setMmmText(p=>(p?p+"\n\n":"")+String(text||""));
+      }
+    }
   };
 
   // ── FREE CANVAS FALLBACK ────────────────────────────────────────────────
@@ -4217,7 +4271,7 @@ function P1({ go }) {
           <div style={{fontSize:11,color:DIM,letterSpacing:0.4,marginBottom:12}}>Cinema intelligence platform — est. 2025</div>
           <div style={{fontFamily:"'Archivo',system-ui,sans-serif",fontSize:"clamp(34px,6vw,58px)",fontWeight:600,color:GOLD,letterSpacing:0.4,lineHeight:1,textShadow:"none"}}>INFUTURE</div>
           <div style={{fontFamily:"'Archivo',system-ui,sans-serif",fontSize:"clamp(34px,6vw,58px)",fontWeight:600,color:GOLD,letterSpacing:0.4,lineHeight:1,textShadow:"none",marginBottom:14}}>Movie Studios</div>
-          <div style={{color:WHITE,fontSize:12,letterSpacing:0.4,marginBottom:28,fontWeight:600}}>600+ AI tools · 8K export · up to 3-hour films</div>
+          <div style={{color:WHITE,fontSize:12,letterSpacing:0.4,marginBottom:28,fontWeight:600}}>200+ AI tools · 8K export · up to 3-hour films</div>
           <div style={{display:"flex",gap:14,justifyContent:"center",flexWrap:"wrap"}}>
             <button onClick={()=>go(4)} style={{...G("gold",false),fontSize:14,padding:"14px 38px",letterSpacing:0.2}}>Start creating</button>
             <button onClick={()=>go(4)} style={{...G("out",false),fontSize:14,padding:"14px 38px",letterSpacing:0.2}}>Login / register</button>
@@ -4225,7 +4279,7 @@ function P1({ go }) {
         </div>
       </div>
       <div style={{borderTop:"1px solid "+GOLDDIM+"",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,padding:"16px 24px",maxWidth:800,margin:"0 auto"}}>
-        {[["600+","AI TOOLS"],["8K","EXPORT"],["3 HRS","DURATION"],["1TB","STORAGE"]].map(([v,l])=>(
+        {[["200+","AI TOOLS"],["8K","EXPORT"],["3 HRS","DURATION"],["1TB","STORAGE"]].map(([v,l])=>(
           <div key={v} style={{...Card(),textAlign:"center",padding:12}}>
             <div style={{color:GOLD,fontFamily:"'Archivo',system-ui,sans-serif",fontSize:22,fontWeight:600}}>{v}</div>
             <div style={{color:WHITE,fontSize:11,marginTop:3,fontWeight:500,letterSpacing:0.2}}>{l}</div>
@@ -4543,7 +4597,7 @@ function P4({ go, setUser }) {
           <div style={{...Card(),textAlign:"center"}}>
             <div style={{fontSize:36,marginBottom:10}}></div>
             <h2 style={{...H1,fontSize:16,marginBottom:10}}>Explore first</h2>
-            <p style={{color:WHITE,fontSize:14,lineHeight:1.7,marginBottom:20}}>Browse 600+ AI tools before committing. No account required.</p>
+            <p style={{color:WHITE,fontSize:14,lineHeight:1.7,marginBottom:20}}>Browse 200+ AI tools before committing. No account required.</p>
             <button onClick={()=>{window.open(STRIPE.basic,"_blank");alert("Start your free 7-day trial to access InFuture Movie Studios. No commitment required.");}} style={{...G("out",false),width:"100%"}}>Browse as guest — start free trial</button>
           </div>
         </div>
@@ -4556,7 +4610,7 @@ function P4({ go, setUser }) {
           {[
             {t:"Basic plan",p:"20",link:STRIPE.basic,f:["HD Export 1080p","100 AI Tools","10GB Storage","Email Support"],pop:false,trial:false,ent:false},
             {t:"Pro plan",p:"30",link:STRIPE.pro,f:["4K Export","300 AI Tools","100GB Storage","Priority Support","Commercial License"],pop:true,trial:false,ent:false},
-            {t:"Studio plan",p:"50",link:STRIPE.studio,f:["8K Export","600+ AI Tools","1TB Storage","24/7 Support","Full Rights","API Access","7-Day Free Trial"],pop:false,trial:true,ent:false},
+            {t:"Studio plan",p:"50",link:STRIPE.studio,f:["8K Export","200+ AI Tools","1TB Storage","24/7 Support","Full Rights","API Access","7-Day Free Trial"],pop:false,trial:true,ent:false},
           ].map(plan=>(
             <div key={plan.t} style={{...Card(),border:plan.pop?"2px solid "+SIGNAL:"1px solid "+GOLDDIM,position:"relative"}}>
               {plan.pop&&<div style={{position:"absolute",top:-11,left:"50%",transform:"translateX(-50%)",background:GOLD,color:"#000",padding:"2px 12px",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>Most popular</div>}
@@ -5173,65 +5227,91 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
     }
     return out;
   };
-  const getAudioTrack=()=>{
+  const getAudioTrack=(poolOverride)=>{
     // If the render-time confirm forced a specific track, that wins over everything.
     if(forcedAudioRef.current){
-      const pool0=getAudioPool();
+      const pool0=poolOverride||getAudioPool();
       const forced=pool0.find(a=>(a.id&&a.id===forcedAudioRef.current)||(a.dbId&&a.dbId===forcedAudioRef.current));
       if(forced)return forced;
     }
-    const pool=getAudioPool();
+    const pool=poolOverride||getAudioPool();
     if(!pool.length)return undefined;
-    // PRIORITY 1: YOUR OWN recording wins over everything. This is the 15-minute
-    // narration Amanda recorded herself ("USE MY VOICE AS NARRATION" / "My Voice
-    // Narration", type audio/myvoice WITHOUT a clonedVoiceId). Her real voice must
-    // beat any engine voice — that is the whole point of recording it.
-    // PRIORITY 1: the FULL narration — your voice cloned, reading the WHOLE script
+    // PRIORITY 1: the FULL narration — YOUR voice cloned, reading the WHOLE script
     // (carries clonedVoiceId + narrText). This is "USE ENGINE TO COMPLETE FULL
-    // NARRATION". It MUST win, or the render plays only the one paragraph you
-    // recorded and stops. This is the fix for narration cutting off after para 1.
+    // NARRATION" — your own cloned voice, not a preset.
     const cloned=pool.find(a=>a.clonedVoiceId&&a.narrText);
     if(cloned)return cloned;
-    // PRIORITY 2: a plain narration that carries the full script text.
-    const fullText=pool.find(a=>(a.type==="narration"||a.type==="audio/narration")&&(a.narrText||a.text));
-    if(fullText)return fullText;
-    // PRIORITY 3: your own single recording (one paragraph) — only if there is no
-    // full narration saved.
+    // PRIORITY 2: your own recording — type audio/myvoice. This MUST beat a generic
+    // engine narration. Before this fix, a leftover generic "narration" asset (read
+    // in a default preset voice, e.g. a male voice) outranked your actual recorded
+    // voice — so the film played a stranger's voice over your own, even though you'd
+    // recorded and/or cloned yourself. Your real voice is the whole point.
     const myRecording=pool.find(a=>a.type==="audio/myvoice"&&!a.clonedVoiceId);
     if(myRecording)return myRecording;
     const myVoice=pool.find(a=>a.type==="audio/myvoice");
     if(myVoice)return myVoice;
+    // PRIORITY 3: a plain narration carrying full script text, but in a PRESET
+    // voice (no clone, no recording of yours exists) — last resort only.
+    const fullText=pool.find(a=>(a.type==="narration"||a.type==="audio/narration")&&(a.narrText||a.text));
+    if(fullText)return fullText;
     // PRIORITY 4: anything else audio, first one wins (old behaviour).
     return pool[0];
   };
 
   // Background music bed. A music asset is any audio the user tagged as music,
   // or a second audio asset that is NOT the narration we're already using.
-  const getMusicTrack=(narr)=>{
+  const getMusicTrack=(narr,poolOverride)=>{
     const isMusic=(a)=>a&&a.type&&(a.type==="audio/music"||a.type==="music"||/music|score|soundtrack|bgm|bed/i.test(a.name||""));
-    const pool=[...Object.values(timeline||{}).flat(),...(mediaLib||[])].filter(Boolean);
-    const tagged=pool.find(isMusic);
-    if(tagged)return tagged;
-    // else: a distinct second audio asset (not the narration)
-    const audios=pool.filter(a=>a.type&&(a.type.startsWith("audio")||a.type==="audio/webm"));
-    return audios.find(a=>narr?(a.id!==narr.id&&a.dbId!==narr.dbId):true&&a!==narr);
+    const pool=poolOverride||[...Object.values(timeline||{}).flat(),...(mediaLib||[])].filter(Boolean);
+    // ONLY a track actually tagged/named as music counts as music. Before this,
+    // if nothing was tagged, it grabbed ANY other audio file in the library as a
+    // "music bed" — which meant an old recording or a leftover narration take
+    // got mixed in UNDER your real narration as a second voice. No tagged music
+    // found = no music track. Silence is correct; a stray second voice is not.
+    return pool.find(isMusic);
   };
 
   const startRender=async()=>{
+    // ── LIVE STORAGE PULL — fetched ONCE, upfront, straight from IndexedDB ─────
+    // Before this fix, video clips were re-checked against storage at render
+    // time (below) but narration/music were only read from the in-memory
+    // mediaLib/timeline state. If the page had just loaded — or "Open Project"
+    // hadn't finished its own restore yet — that in-memory state could still be
+    // empty for a few moments. Video quietly self-healed from storage; audio did
+    // not, so the film could come out with no voice and no music and NO ERROR,
+    // even though everything was actually saved safely. Now everything (video,
+    // narration, music) is pulled from storage once, right here, before anything
+    // else runs, so the render always sees what's really been saved — no matter
+    // how or when it was added.
+    let dbClipsAll = [];
+    try{ dbClipsAll = await getAllClipsFromDB(); }catch(e){ console.warn("DB load failed",e); }
+    const dbAudioAssets = dbClipsAll
+      .filter(c2=>c2&&c2.type&&c2.type.startsWith("audio"))
+      .map(c2=>({id:c2.id,dbId:c2.id,name:c2.name,type:c2.type||"audio/mpeg",url:URL.createObjectURL(c2.blob)}));
+    const mergePools=(a,b)=>{
+      const seen=new Set(); const out=[];
+      for(const x of [...(a||[]),...(b||[])]){
+        if(!x)continue;
+        const k=String(x.id||x.dbId||"")+"|"+String(x.name||"");
+        if(seen.has(k))continue; seen.add(k); out.push(x);
+      }
+      return out;
+    };
+
     // ── VOICE CONFIRM — before any render work ─────────────────────────────────
     // Asks which narration/voice to use, so the render never silently defaults to
     // a preset voice. OK keeps the auto-pick; Cancel opens a numbered list of every
     // saved voice/recording so you can pick your own. The choice is forced for this
     // render only (forcedAudioRef), then cleared when the render finishes.
     forcedAudioRef.current=null;
-    const voicePool=getAudioPool();
+    const voicePool=mergePools(getAudioPool(),dbAudioAssets);
     if(voicePool.length>0){
       const nameOf=(a,i)=>{
         if(a.clonedVoiceId&&a.narrText) return (a.name||"Full narration")+" (engine voice)";
         if(a.type==="audio/myvoice"||a.type==="audio/webm") return (a.name||"My recording")+" (your recording)";
         return a.name||("Audio "+(i+1));
       };
-      const autoPick=getAudioTrack();
+      const autoPick=getAudioTrack(voicePool);
       const autoName=autoPick?nameOf(autoPick,voicePool.indexOf(autoPick)):"(none)";
       const keep=window.confirm("Use this voice for the film?\n\n▶ "+autoName+"\n\nOK = yes, use it.\nCancel = choose a different voice / my recording.");
       if(!keep){
@@ -5248,6 +5328,8 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
       } else {
         log("Voice confirmed: "+autoName);
       }
+    } else {
+      log("No narration/voice found in storage — film will render silent unless one is added.");
     }
     // ── PRIORITY SAVE — runs before anything else ──────────────────────────────
     // Saves current state immediately so a crash mid-render doesn't lose work.
@@ -5259,12 +5341,11 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
     // ── PRE-RENDER STORAGE CHECK — never touches source clips ──────────────────
     // Only clears old render_final files, never user-generated source clips.
     // Before this fix, autoPruneClips was destroying 12 of 13 clips before render.
+    // Reuses the dbClipsAll already pulled above — no need to hit storage twice.
     try{
-      const clips=await getAllClipsFromDB();
-      // Delete only old finished renders, never source scene clips
-      const oldRenders=clips.filter(c=>String(c.id).includes("render_final_old"));
+      const oldRenders=dbClipsAll.filter(c=>String(c.id).includes("render_final_old"));
       for(const c of oldRenders){await deleteClipFromDB(c.id);}
-      log("Memory check complete — "+clips.length+" clips preserved");
+      log("Memory check complete — "+dbClipsAll.length+" clips preserved");
     }catch(e){}
 
     // ── CLIP ORDER: the TIMELINE is the authority ──────────────────────────
@@ -5275,8 +5356,6 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
     // straight from the timeline, and use IndexedDB ONLY to refresh each clip's
     // blob/url. The number-sort runs ONLY when there is no timeline at all.
     let freshClips = [];
-    let dbClipsAll = [];
-    try{ dbClipsAll = await getAllClipsFromDB(); }catch(e){ console.warn("DB load failed",e); }
     const dbById = new Map(); const dbByName = new Map();
     for(const c2 of dbClipsAll){ dbById.set(c2.id,c2); if(c2.name)dbByName.set(c2.name,c2); }
     const relink=(c2)=>{
@@ -5333,7 +5412,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
     } else {
       log("Render order locked to timeline: "+clips.map(c2=>(c2.name||"").slice(0,18)).join(" → "));
     }
-    const audioAsset=getAudioTrack();
+    const audioAsset=getAudioTrack(voicePool);
     if(clips.length===0){alert("No video clips found. Generate clips on Page 8 first.");return;}
     log("Rendering "+clips.length+" scene clips (old render files excluded)");
     setRendering(true);setDone(false);setProgress(0);setRenderLog([]);setRenderUrl("");setCurrentClipIdx(-1);
@@ -5505,7 +5584,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
       // stays on top (locked mix VOICE 85 / MUSIC 40 ≈ 0.25 gain under voice).
       let musicSource=null;
       try{
-        const musicAsset=getMusicTrack(audioAsset);
+        const musicAsset=getMusicTrack(audioAsset,voicePool);
         if(musicAsset){
           let mBlob=null;
           const mId=musicAsset.dbId||musicAsset.id;
@@ -5637,17 +5716,54 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
         }
       }catch(e){log("Storage reload: "+e.message);}
 
+      // ── NARRATION-TO-IMAGE MATCH — each image's screen time follows ITS OWN
+      // narration segment, instead of every clip getting an identical average
+      // share of the total length. The saved script (ms_narr_text) is split into
+      // one segment per paragraph, matched 1-for-1 to your clips in order. If the
+      // narration has MORE segments than you have images, a scene is generated
+      // for every leftover segment — never left blank, never stretched to cover
+      // the gap. If it has FEWER, the trailing images just share the last timing.
+      let perClipDurations = null; // null = old uniform/stretch behaviour below
+      try{
+        const scriptText=(()=>{try{return (localStorage.getItem("ms_narr_text")||"").trim();}catch(e){return "";}})();
+        if(scriptText && clips.length>0 && narrSeq && narrSeq.total>0){
+          let segments=scriptText.split(/\n\s*\n/).map(s=>s.trim()).filter(Boolean);
+          if(segments.length<2) segments=[scriptText];
+          if(segments.length>clips.length){
+            const extra=segments.length-clips.length;
+            log("Narration has "+extra+" more segment"+(extra!==1?"s":"")+" than you have images — generating "+extra+" scene"+(extra!==1?"s":"")+" to match.");
+            for(let s=clips.length;s<segments.length;s++){
+              const seed=segments[s].replace(/[^\w\s]/g,"").trim().slice(0,80)||"cinematic scene";
+              clips.push({name:seed+".generated",type:"video/generated",__generated:true});
+            }
+          }
+          // Each segment's share of screen time follows its own length (a long
+          // paragraph gets more time than a short one), scaled to the measured
+          // narration length — not a flat average across every clip.
+          const lens=segments.map(s=>Math.max(1,s.length));
+          const totalLen=lens.reduce((a,b)=>a+b,0);
+          const totalNarr=narrSeq.total;
+          perClipDurations=clips.map((c,i)=>{
+            const segLen=lens[Math.min(i,lens.length-1)]||1;
+            return Math.max(3,(segLen/totalLen)*totalNarr);
+          });
+          log("Narration matched to "+clips.length+" scenes by segment length ("+(totalNarr/60).toFixed(1)+" min total).");
+        }
+      }catch(e){log("Narration match skipped: "+e.message);}
+
       // ── GAP-FILL: the DURATION SLIDER is master ─────────────────────────────
       // filmDuration (1–180 min, set on the timeline page) decides the film length.
       // Clips stretch to fill that total: each clip holds (sliderSecs / clipCount).
       // The old 65s-per-clip cap is lifted — the engine accepts long clips, so a
       // clip can hold as long as the slider needs. If the slider is somehow unset,
       // fall back to the narration length, then to natural clip lengths.
+      // Skipped entirely when the narration-to-image match above already set
+      // per-clip durations — that match is more precise than an even split.
       const sliderSecs = (Number(filmDuration)>0 ? Number(filmDuration)*60 : 0);
       const narrationSecs = narrSeq ? narrSeq.total : (audioBuffer ? audioBuffer.duration : 0);
       const targetTotal = narrationSecs>0 ? narrationSecs : sliderSecs;
       let perClipTarget = 0; // 0 = use each clip's natural duration
-      if(targetTotal>0 && clips.length>0){
+      if(!perClipDurations && targetTotal>0 && clips.length>0){
         if(gapFill){
           let naturalTotal=0;
           for(const c of clips){ const m=(c.name||"").match(/(\d+)s/); naturalTotal += m?parseInt(m[1]):30; }
@@ -5674,6 +5790,8 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
         const clip=clips[ci];setCurrentClipIdx(ci);
         log("Clip "+(ci+1)+"/"+clips.length+": "+clip.name.slice(0,45));
         setProgress(5+Math.round((ci/clips.length)*80));
+        // This clip's own matched narration-segment duration, if the match above ran.
+        const holdOverride = perClipDurations ? perClipDurations[ci] : null;
 
         // ── IMAGE CLIP → moving documentary footage (Ken Burns pan/zoom) ────────
         // A still image is animated with a slow continuous zoom and drift so it
@@ -5686,7 +5804,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
             await new Promise(resolve=>{
               const img=new Image();
               img.onload=()=>{
-                const holdS = perClipTarget>0?perClipTarget:6;
+                const holdS = holdOverride!=null?holdOverride:(perClipTarget>0?perClipTarget:6);
                 const startT=Date.now();
                 const iw=img.naturalWidth||dims.w, ih=img.naturalHeight||dims.h;
                 // cover-fit the image to the canvas
@@ -5737,7 +5855,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
               // the engine accepts long clips, so a clip can hold as long as needed.
               // Never below its natural length. Loop the source within the window so
               // the picture keeps moving instead of freezing.
-              const clipDur=perClipTarget>0?Math.max(perClipTarget,natural):Math.min(natural,65);
+              const clipDur=holdOverride!=null?Math.max(holdOverride,0.5):(perClipTarget>0?Math.max(perClipTarget,natural):Math.min(natural,65));
               vid.currentTime=0;
               vid.loop=true; // replay within the hold window; render stops it by time, not by end
               // Wait for first frame to decode before drawing
@@ -5774,7 +5892,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
               requestAnimationFrame(draw);
             };
             vid.onerror=()=>finish(false);
-            setTimeout(()=>finish(false),Math.max(70000,(perClipTarget>0?perClipTarget:65)*1000+15000));
+            setTimeout(()=>finish(false),Math.max(70000,(holdOverride!=null?holdOverride:(perClipTarget>0?perClipTarget:65))*1000+15000));
             vid.load();
           });
         }
@@ -5783,7 +5901,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
         if(!videoPlayed){
           log("  Clip not playable — generating scene: "+clip.name.slice(0,30)+"...");
           const natSec=parseInt(clip.name.match(/(\d+)s/)?.[1]||"30");
-          const clipDurSec=perClipTarget>0?Math.max(perClipTarget,natSec):natSec;
+          const clipDurSec=holdOverride!=null?Math.max(holdOverride,3):(perClipTarget>0?Math.max(perClipTarget,natSec):natSec);
           const ok=await renderSceneToCanvas(clip.name,clipDurSec);
           if(!ok){
             // Last resort: plain black hold — real-time paced. No words on screen;
@@ -5995,7 +6113,7 @@ function P16({ go, timeline, setRendered, mediaLib, setMediaLib, user, filmDurat
         <div style={{borderLeft:"1px solid "+GOLDDIM+"",display:"flex",flexDirection:"column",background:"#020200"}}>
           <div style={{background:"#171208",aspectRatio:"16/9",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
             {renderUrl?(
-              <video src={renderUrl} controls autoPlay loop playsInline style={{width:"100%",height:"100%",objectFit:"contain"}}/>
+              <video src={renderUrl} controls autoPlay playsInline style={{width:"100%",height:"100%",objectFit:"contain"}}/>
             ):(
               <div style={{textAlign:"center",padding:20}}>
                 <div style={{color:GOLD,fontSize:28,marginBottom:8}}>Render</div>
@@ -6445,7 +6563,7 @@ function P21() {
     setInp2("");setLoading(true);
     setMsgs(p=>[...p,{role:"user",content:question}]);
     try{
-      const d=await proxyFetch({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are Agent Grok, AI production assistant for InFuture Movie Studios. Expert on all 23 pages, 600+ tools, 54 voice characters, video generator, music video studio, timeline, render engine up to 4K. Plans: Creator $20/mo, Pro $30/mo, Studio $50/mo with 7-day free trial. Be specific and direct.",messages:[...msgs.filter(m=>m.role!=="system"),{role:"user",content:question}]});
+      const d=await proxyFetch({model:"claude-sonnet-4-20250514",max_tokens:1000,system:"You are Agent Grok, AI production assistant for InFuture Movie Studios. Expert on all 23 pages, 200+ tools, 54 voice characters, video generator, music video studio, timeline, render engine up to 4K. Plans: Creator $20/mo, Pro $30/mo, Studio $50/mo with 7-day free trial. Be specific and direct.",messages:[...msgs.filter(m=>m.role!=="system"),{role:"user",content:question}]});
       setMsgs(p=>[...p,{role:"assistant",content:d&&d.content&&d.content[0]?d.content[0].text:"Try again."}]);
     }catch(e){setMsgs(p=>[...p,{role:"assistant",content:"Connection error. Try again."}]);}
     setLoading(false);
@@ -6468,7 +6586,7 @@ function P21() {
             </div>
           </div>
           <div style={{display:"flex",gap:5,flexShrink:0}}>
-            {[["23","PAGES"],["600+","TOOLS"],["54","VOICES"],["4K","RENDER"]].map(([v,l])=>(
+            {[["23","PAGES"],["200+","TOOLS"],["54","VOICES"],["4K","RENDER"]].map(([v,l])=>(
               <div key={l} style={{background:"#171208",border:"1px solid "+GOLDDIM+"44",padding:"5px 8px",textAlign:"center",minWidth:40}}>
                 <div style={{fontFamily:"'Archivo',system-ui,sans-serif",color:GOLD,fontSize:12,fontWeight:600}}>{v}</div>
                 <div style={{color:"#22c55e",fontSize:8,letterSpacing:0,marginTop:1,fontWeight:500}}>{l}</div>
@@ -7165,7 +7283,7 @@ function IntroDoors({ onEnter }){
         zIndex:6,opacity:opening?0:1,transition:"opacity 0.6s",pointerEvents:opening?"none":"auto"}}>
         <div style={{fontFamily:"'Archivo',system-ui,sans-serif",color:GOLD,fontSize:"clamp(22px,5.5vw,50px)",fontWeight:600,letterSpacing:0.4,textShadow:"none"}}>INFUTURE</div>
         <div style={{fontFamily:"'Archivo',system-ui,sans-serif",color:WHITE,fontSize:"clamp(11px,2vw,18px)",letterSpacing:0.4,marginTop:4}}>Studio</div>
-        <div style={{color:GOLDDIM,fontSize:"clamp(8px,1.4vw,11px)",letterSpacing:0.2,marginTop:12,textAlign:"center",padding:"0 16px"}}>Cinema intelligence platform · 600+ AI tools · up to 3-hour films</div>
+        <div style={{color:GOLDDIM,fontSize:"clamp(8px,1.4vw,11px)",letterSpacing:0.2,marginTop:12,textAlign:"center",padding:"0 16px"}}>Cinema intelligence platform · 200+ AI tools · up to 3-hour films</div>
         <button onClick={enter}
           style={{marginTop:22,background:GOLD,border:"none",color:"#000",
           padding:"16px 52px",fontSize:15,fontWeight:600,letterSpacing:0.4,cursor:"pointer",fontFamily:"'Archivo',system-ui,sans-serif",
@@ -7181,7 +7299,7 @@ function IntroDoors({ onEnter }){
 // Keep existing clients: anyone who opens an OLD address is sent to the current
 // live site, so bookmarks and shared links never break.
 const CURRENT_SITE="https://infutura.bolt.host";
-const OLD_HOSTS=["infuturem0viestudi0s.bolt.host","infuturem0viestudi0.bolt.host","infuturemoviestudios.bolt.host","infuturemoviestudio.bolt.host","mandastrongmovies-101.bolt.host","mandastrongmovies101.bolt.host","mandastrongstudio2026.bolt.host","mandastrong-01.bolt.host","mandastrong01.bolt.host"];
+const OLD_HOSTS=["infutura-1.bolt.host","infutura1.bolt.host","infuturem0viestudi0s.bolt.host","infuturem0viestudi0.bolt.host","infuturemoviestudios.bolt.host","infuturemoviestudio.bolt.host","mandastrongmovies-101.bolt.host","mandastrongmovies101.bolt.host","mandastrongstudio2026.bolt.host","mandastrong-01.bolt.host","mandastrong01.bolt.host"];
 // ── RESCUE: your work is saved in the browser UNDER THE ADDRESS you used. ──
 // Work done on an old address stays filed under that address. The old
 // redirect sent you away before you could reach it, so My Projects looked
@@ -7279,7 +7397,7 @@ async function msMergeTransfer(d){
   return {projects,clips:clipsIn};
 }
 // Every address the studio has ever lived on. FIND MY WORK checks them all.
-const FIND_HOSTS=["infuturem0viestudi0s.bolt.host","infuturem0viestudi0.bolt.host","infuturemoviestudios.bolt.host","infuturemoviestudio.bolt.host","mandsstrongmovie.bolt.host","mandastrongmovie.bolt.host","mandastrongmovies.bolt.host","mandastrongmovies-101.bolt.host","mandastrongmovies101.bolt.host","mandastrongstudio2026.bolt.host","mandastrong-01.bolt.host","mandastrong01.bolt.host"];
+const FIND_HOSTS=["infutura-1.bolt.host","infutura1.bolt.host","infuturem0viestudi0s.bolt.host","infuturem0viestudi0.bolt.host","infuturemoviestudios.bolt.host","infuturemoviestudio.bolt.host","mandsstrongmovie.bolt.host","mandastrongmovie.bolt.host","mandastrongmovies.bolt.host","mandastrongmovies-101.bolt.host","mandastrongmovies101.bolt.host","mandastrongstudio2026.bolt.host","mandastrong-01.bolt.host","mandastrong01.bolt.host"];
 // Opens each old address in ONE helper tab, one after another. Each old
 // address sends back whatever work it holds, and it is merged in here.
 async function msFindMyWork(onStep){
@@ -7370,7 +7488,7 @@ function AppMain() {
   // this it always snapped back to Page 1. Read the saved page so it stays put.
   // Always open on page 1. Your work (timeline, clips, media) is saved separately
   // and is NOT wiped by this — only the starting page is reset to 1 each load.
-  const [page,setPage]=useState(1);
+  const [page,setPage]=useState(()=>{try{const v=JSON.parse(localStorage.getItem("ms_page")||"1");return (typeof v==="number"&&v>=1&&v<=TOTAL)?v:1;}catch{return 1;}});
   // ── CINEMATIC INTRO — gold doors open to reveal the app ──
   const [showIntro,setShowIntro]=useState(false); // doors removed - app opens straight in
   // Show the "Press to Create" splash only on a true first visit. If you were
@@ -7452,7 +7570,7 @@ function AppMain() {
       const manifestData={
         name:"InFuture Movie Studios",
         short_name:"InFuture",
-        description:"Cinema Intelligence Platform — 600+ AI tools, 24 pages, up to 3-hour films",
+        description:"Cinema Intelligence Platform — 200+ AI tools, 24 pages, up to 3-hour films",
         start_url:"/",
         display:"standalone",
         background_color:"#000000",
@@ -7714,7 +7832,8 @@ function AppMain() {
       case 21: return <P21/>;
       case 22: return <P22/>;
       case 23: return <P23 go={go}/>;
-      case 24: return <P24CharacterStudio onSave={saveAsset} go={go}/>;
+      case 24: return <P23 go={go}/>;
+      case 25: return <P24CharacterStudio onSave={saveAsset} go={go}/>;
       default: return <P1 go={go}/>;
     }
   };
